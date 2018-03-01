@@ -1,0 +1,214 @@
+http://www.pymvpa.org/tutorial_mappers.html
+
+Getting data in shape
+
+
+and there is little one would do without them
+
+In general, a mapper is an algorithm that transforms data
+
+>>> from mvpa2.tutorial_suite import * >>> ds = dataset_wizard(np.ones((5, 12))) >>> ds.shape (5, 12)
+
+
+Some datasets (such as the ones fmri_dataset() with a mask) contain mappers as a dataset attribute .a.mapper.
+
+
+>>> 'mapper' in ds.a False
+
+
+in a tiny
+
+
+>>> ds = dataset_wizard(np.ones((5, 4, 3))) 
+>>> ds.shape (5, 12) 
+>>> 'mapper' in ds.a True 
+>>> print ds.a.mapper <FlattenMapper>
+
+Somehow
+
+The purpose of this mapper is precisely what we have just observed: reshaping data arrays into 2D
+
+
+>>> myfavs = [1, 2, 8, 10] >>> subds = ds[:, myfavs] >>> subds.shape (5, 4) >>> 'mapper' in subds.a True >>> print subds.a.mapper <Chain: <Flatten>-<StaticFeatureSelection>>
+
+
+former
+
+like a breadcrumb track
+
+
+but can be fed
+
+
+as long as
+
+>>> fwdtest = np.arange(12).reshape(4,3) >>> print fwdtest [[ 0  1  2]  [ 3  4  5]  [ 6  7  8]  [ 9 10 11]] >>> fmapped = subds.a.mapper.forward1(fwdtest) >>> fmapped.shape (4,) >>> print fmapped [ 1  2  8 10]
+
+forward mapping applies
+
+
+>> Load real data
+
+
+We have pretty much all the pieces to start a first analysis
+
+a study where participants passively watched gray scale images of eight object categories in a block-design experiment. 
+
+A pattern of activation for each stimulus category in each half of the data (split by odd vs. even runs; i.e. 16 samples), including the associated sample attributes that are necessary to perform a cross-validated classification analysis of the data.
+
+
+For a classification analysis we also need to associate each sample with a corresponding experimental condition, i.e. a class label, also sometimes called target value.
+
+
+Moreover, for a cross-validation procedure we also need to partition the full dataset into, presumably, independent chunks.
+
+
+Both, target values and chunks are defined by the design of the experiment.
+
+
+we will look at later on
+
+
+where the sessions define the corresponding data chunks.
+
+
+>>> # directory that contains the data files 
+>>> data_path = os.path.join(tutorial_data_path, 'haxby2001') 
+>>> attr_fname = os.path.join(data_path, 'sub001', ...                           'BOLD', 'task001_run001', 'attributes.txt') 
+>>> attr = SampleAttributes(attr_fname) 
+>>> len(attr.targets) 121 
+>>> print np.unique(attr.targets) ['bottle' 'cat' 'chair' 'face' 'house' 'rest' 'scissors' 'scrambledpix'  'shoe'] 
+>>> len(attr.chunks) 121 
+>>> print np.unique(attr.chunks) [ 0.]
+
+>>> bold_fname = os.path.join(data_path, 
+...                           'sub001', 'BOLD', 'task001_run001', 'bold.nii.gz') 
+>>> mask_fname = os.path.join(tutorial_data_path, 'haxby2001', ...                           'sub001', 'masks', 'orig', 'vt.nii.gz') 
+>>> fds = fmri_dataset(samples=bold_fname, 
+...                    targets=attr.targets, chunks=attr.chunks, 
+...                    mask=mask_fname) 
+>>> fds.shape (121, 577) 
+>>> print fds.sa <SampleAttributesCollection: chunks,targets,time_coords,time_indices>
+
+
+>> More structure, less duplication of work
+
+
+Although one could craft
+
+doing so would be suboptimal
+
+is most likely available already in different form or shape
+
+by the openfmri.org data-sharing platform
+
+
+>>> dhandle = OpenFMRIDataset(data_path) 
+>>> dhandle.get_subj_ids() [1] 
+>>> dhandle.get_task_descriptions() {1: 'object viewing'}
+
+>>> model = 1 >>> subj = 1 >>> run = 1 
+>>> events = dhandle.get_bold_run_model(model, subj, run) 
+>>> for ev in events[:2]: 
+...     print ev {'task': 1, 'run': 1, 'onset_idx': 0, 'conset_idx': 0, 'onset': 15.0, 'intensity': 1, 'duration': 22.5, 'condition': 'scissors'} {'task': 1, 'run': 1, 'onset_idx': 1, 'conset_idx': 0, 'onset': 52.5, 'intensity': 1, 'duration': 22.5, 'condition': 'face'}
+
+
+>>> targets = events2sample_attr(events, fds.sa.time_coords, 
+...                              noinfolabel='rest', onset_shift=0.0) 
+>>> print np.unique([attr.targets[i] == t for i, t in enumerate(targets)]) [ True] 
+>>> print np.unique(attr.targets) ['bottle' 'cat' 'chair' 'face' 'house' 'rest' 'scissors' 'scrambledpix'  'shoe']  
+>>> print len(fds), len(targets)  121 121
+
+
+>>> task = 1 
+>>> fds = dhandle.get_bold_run_dataset(subj, task, run, mask=mask_fname) >>> print fds <Dataset: 121x577@int16, <sa: run,subj,task,time_coords,time_indices>, <fa: voxel_indices>, <a: imgaffine,imghdr,imgtype,mapper,voxel_dim,voxel_eldim>>
+
+
+>> Multi-session data
+
+
+The following code snippet 
+
+>>> task = 1   # object viewing task 
+>>> model = 1  # image stimulus category model 
+>>> subj = 1 
+>>> run_datasets = [] 
+>>> for run_id in dhandle.get_task_bold_run_ids(task)[subj]: 
+...     # load design info for this run 
+...     run_events = dhandle.get_bold_run_model(model, subj, run_id) 
+...     # load BOLD data for this run (with masking); add 0-based chunk ID 
+...     run_ds = dhandle.get_bold_run_dataset(subj, task, run_id, 
+...                                           chunks=run_id -1, 
+...                                           mask=mask_fname) 
+...     # convert event info into a sample attribute and assign as 'targets' 
+...     run_ds.sa['targets'] = events2sample_attr( 
+...                 run_events, run_ds.sa.time_coords, noinfolabel='rest') ...     # additional time series preprocessing can go here ...     run_datasets.append(run_ds) 
+>>> # this is PyMVPA's vstack() for merging samples from multiple datasets 
+>>> # a=0 indicates that the dataset attributes of the first run should be used 
+>>> # for the merged dataset 
+>>> fds = vstack(run_datasets, a=0)
+
+
+>>> print fds.summary()
+
+
+temporal drifts
+
+is warming up
+
+>> Basic preprocessing
+>> Detrending¶
+
+>>> detrender = PolyDetrendMapper(polyord=1, chunks_attr='chunks')
+
+
+>>> detrended_fds = fds.get_mapped(detrender) 
+>>> print detrended_fds.a.mapper <Chain: <Flatten>-<StaticFeatureSelection>-<PolyDetrend: ord=1>>
+
+>> Normalization
+
+
+While this will hopefully have solved the problem of temporal drifts in the data
+
+
+we still have inhomogeneous voxel intensities
+
+
+perform a feature-wise, chunk-wise Z-scoring of the data
+
+
+having large offsets
+
+you guessed it
+
+
+>>> zscorer = ZScoreMapper(param_est=('targets', ['rest']))
+
+
+>>> zscore(detrended_fds, param_est=('targets', ['rest'])) 
+>>> fds = detrended_fds 
+>>> print fds.a.mapper <Chain: <Flatten>-<StaticFeatureSelection>-<PolyDetrend: ord=1>-<ZScore>>
+
+
+>>> fds = fds[fds.sa.targets != 'rest'] >>> print fds.shape (864, 577)
+
+
+
+> > Computing Patterns Of Activation
+
+
+>>> rnames = {0: 'even', 1: 'odd'} 
+>>> fds.sa['runtype'] = [rnames[c % 2] for c in fds.sa.chunks]
+
+
+>>> averager = mean_group_sample(['targets', 'runtype']) >>> type(averager) <class 'mvpa2.mappers.fx.FxMapper'> >>> fds = fds.get_mapped(averager) >>> fds.shape (16, 577) >>> print fds.sa.targets ['bottle' 'cat' 'chair' 'face' 'house' 'scissors' 'scrambledpix' 'shoe'  'bottle' 'cat' 'chair' 'face' 'house' 'scissors' 'scrambledpix' 'shoe'] >>> print fds.sa.chunks
+
+>> There and back again – a Mapper’s tale
+
+
+
+
+
+
+
+
